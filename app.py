@@ -146,6 +146,24 @@ def apply_criticality(features: pd.DataFrame, n_clusters: int) -> pd.DataFrame:
     return f.sort_values("score_criticidade", ascending=False).reset_index(drop=True)
 
 
+@st.cache_data(show_spinner=False)
+def csv_notificacoes(df: pd.DataFrame) -> bytes:
+    """Gera o CSV das notificações filtradas (computado uma única vez)."""
+    return df.to_csv(index=False).encode("utf-8")
+
+
+@st.cache_data(show_spinner=False)
+def csv_municipios(df: pd.DataFrame) -> bytes:
+    """Gera o CSV de municípios/criticidade (computado uma única vez)."""
+    colunas = [
+        "nome", "UF", "id_municip", "casos", "obitos", "hospitalizados",
+        "taxa_hospitalizacao", "taxa_obito", "score_criticidade", "nivel",
+        "latitude", "longitude",
+    ]
+    colunas = [c for c in colunas if c in df.columns]
+    return df[colunas].to_csv(index=False).encode("utf-8")
+
+
 def forecast_arima(series: pd.Series, steps: int = 12):
     """Ajusta SARIMA sazonal (m=12) e projeta `steps` meses à frente."""
     from pmdarima import auto_arima
@@ -215,16 +233,11 @@ def main() -> None:
     # Exportação dos dados que alimentam o dashboard
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📤 Exportar dados")
-    csv_filt = df_f.to_csv(index=False).encode("utf-8")
+    csv_filt = csv_notificacoes(df_f)
     st.sidebar.download_button(
         "⬇️ Notificações filtradas (CSV)", csv_filt, "dengue_notificacoes_filtradas.csv", "text/csv"
     )
-    colunas_export = [
-        "nome", "UF", "id_municip", "casos", "obitos", "hospitalizados",
-        "taxa_hospitalizacao", "taxa_obito", "score_criticidade", "nivel",
-        "latitude", "longitude",
-    ]
-    csv_mun = features[colunas_export].to_csv(index=False).encode("utf-8")
+    csv_mun = csv_municipios(features)
     st.sidebar.download_button(
         "⬇️ Municípios e criticidade (CSV)", csv_mun, "dengue_municipios_criticalidade.csv", "text/csv"
     )
