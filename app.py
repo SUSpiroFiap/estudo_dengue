@@ -212,6 +212,27 @@ def main() -> None:
     features = features.merge(municipios, on="id_municip", how="left")
     features["nome"] = features["nome"].fillna(features["id_municip"])
 
+    # Exportação dos dados que alimentam o dashboard
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📤 Exportar dados")
+    csv_filt = df_f.to_csv(index=False).encode("utf-8")
+    st.sidebar.download_button(
+        "⬇️ Notificações filtradas (CSV)", csv_filt, "dengue_notificacoes_filtradas.csv", "text/csv"
+    )
+    colunas_export = [
+        "nome", "UF", "id_municip", "casos", "obitos", "hospitalizados",
+        "taxa_hospitalizacao", "taxa_obito", "score_criticidade", "nivel",
+        "latitude", "longitude",
+    ]
+    csv_mun = features[colunas_export].to_csv(index=False).encode("utf-8")
+    st.sidebar.download_button(
+        "⬇️ Municípios e criticidade (CSV)", csv_mun, "dengue_municipios_criticalidade.csv", "text/csv"
+    )
+    st.sidebar.caption(
+        "O CSV de notificações reflete o filtro de UF aplicado; "
+        "o de municípios traz o score de criticidade usado no mapa e nas tabelas."
+    )
+
     tab_prev, tab_crit, tab_acao = st.tabs(
         ["📈 Previsão (ARIMA)", "🗺️ Municípios Críticos", "🎯 Priorização e Ações"]
     )
