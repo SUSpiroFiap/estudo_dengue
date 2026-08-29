@@ -2,7 +2,7 @@
 
 Análises:
   1. Previsão do número de casos do próximo mês (ARIMA).
-  2. Identificação dos municípios mais críticos (clustering).
+  2. Identificação dos municípios mais críticos (score de criticidade).
   3. Priorização e ações recomendadas com base na criticidade.
 """
 
@@ -16,8 +16,6 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings("ignore")
 
@@ -113,36 +111,47 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     return g
 
 
-def apply_criticality(features: pd.DataFrame, n_clusters: int) -> pd.DataFrame:
-    """Calcula score de criticidade e rótulos de cluster."""
+def apply_criticality(features: pd.DataFrame) -> pd.DataFrame:
+    """Calcula o score de criticidade e o nível (cortes fixos) por município."""
     f = features.copy()
     f["log_casos"] = np.log1p(f["casos"])
 
-    n_clusters = min(n_clusters, max(2, f.shape[0] - 1))
+    PISO_CASOS = 50
+    # Municípios abaixo do piso pontuam por volume: taxas zeradas (evita taxas infladas).
+    sub_piso = f["casos"] < PISO_CASOS
+    f.loc[sub_piso, "taxa_hospitalizacao"] = 0.0
+    f.loc[sub_piso, "taxa_obito"] = 0.0
 
-    scaler = StandardScaler()
-    X = scaler.fit_transform(f[["log_casos", "taxa_hospitalizacao", "taxa_obito"]])
+    # Normalização min-max para o score.
+    f["norm_log_casos"] = (f["log_casos"] - f["log_casos"].min()) / (
+        f["log_casos"].max() - f["log_casos"].min() + 1e-9
+    )
+    f["norm_taxa_obito"] = (f["taxa_obito"] - f["taxa_obito"].min()) / (
+        f["taxa_obito"].max() - f["taxa_obito"].min() + 1e-9
+    )
+    f["norm_taxa_hospitalizacao"] = (
+        f["taxa_hospitalizacao"] - f["taxa_hospitalizacao"].min()
+    ) / (f["taxa_hospitalizacao"].max() - f["taxa_hospitalizacao"].min() + 1e-9)
 
-    km = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-    f["cluster"] = km.fit_predict(X)
-
-    for col in ["casos", "taxa_hospitalizacao", "taxa_obito"]:
-        f[f"norm_{col}"] = (f[col] - f[col].min()) / (f[col].max() - f[col].min() + 1e-9)
-
+    # Score: volume (log) + severidade (óbitos e hospitalização).
     f["score_criticidade"] = (
-        0.5 * f["norm_casos"]
+        0.5 * f["norm_log_casos"]
         + 0.3 * f["norm_taxa_obito"]
         + 0.2 * f["norm_taxa_hospitalizacao"]
-    )
-    f["score_criticidade"] = (f["score_criticidade"] * 100).round(1)
+    ) * 100
+    f["score_criticidade"] = f["score_criticidade"].round(1)
 
-    # Mapeia cada cluster ao seu nível de criticidade pelo ranking da média do score.
-    order = (
-        f.groupby("cluster")["score_criticidade"].mean().sort_values(ascending=False).index.tolist()
-    )
-    tier_labels = ["Crítico", "Alto", "Médio", "Baixo"]
-    cluster_to_tier = {c: tier_labels[i] if i < len(tier_labels) else "Baixo" for i, c in enumerate(order)}
-    f["nivel"] = f["cluster"].map(cluster_to_tier)
+    # Nível derivado do score, com cortes fixos (validado no Oracle).
+    def classificar(s: float) -> str:
+        if s >= 50:
+            return "Crítico"
+        if s >= 35:
+            return "Alto"
+        if s >= 20:
+            return "Médio"
+        return "Baixo"
+
+    f["nivel"] = f["score_criticidade"].apply(classificar)
     return f.sort_values("score_criticidade", ascending=False).reset_index(drop=True)
 
 
@@ -207,7 +216,6 @@ def main() -> None:
     with st.sidebar:
         st.header("Filtros")
         uf_sel = st.multiselect("UF(s)", ufs, default=[])
-        n_clusters = st.slider("Nº de clusters de criticidade", 3, 6, 4)
         horizonte = st.slider("Horizonte de previsão (meses)", 3, 12, 12)
         st.info(
             "Deixe 'UF(s)' vazio para considerar todo o Brasil. "
@@ -226,7 +234,7 @@ def main() -> None:
     base_features = build_features(df_f)
     q1 = base_features["casos"].quantile(0.25)
     base_features = base_features[base_features["casos"] > q1]
-    features = apply_criticality(base_features, n_clusters)
+    features = apply_criticality(base_features)
     features = features.merge(municipios, on="id_municip", how="left")
     features["nome"] = features["nome"].fillna(features["id_municip"])
 
